@@ -128,11 +128,13 @@
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
   let finalText = '';
-  let recognition = null;
+  let recognition = null;     // single reused instance — never rebuilt while alive
   let listening = false;      // user wants it running
-  let recognizing = false;    // engine currently active
+  let recognizing = false;    // engine currently active (onstart fired, onend not yet)
+  let starting = false;       // start() called, waiting for onstart/onerror — blocks overlap
   let restartTimer = null;
-  let audioCtx, analyser, micStream, meterRaf;
+  let lastResultIndex = 0;    // guards against a stray duplicate onresult firing
+  let meterRaf = null;
 
   function setStatus(msg, state){
     statusText.textContent = msg;
@@ -155,25 +157,36 @@
     toggleBtn.disabled = true;
   }
 
-  function buildRecognition(){
+  // Build exactly ONE recognition object for the whole session and reuse it.
+  // Recreating a new object on every restart was the cause of duplicated text:
+  // for a brief moment two instances were both alive and both firing onresult
+  // for the same utterance.
+  function ensureRecognition(){
+    if(recognition) return recognition;
     const rec = new SpeechRecognition();
     rec.continuous = true;
     rec.interimResults = true;
-    rec.lang = langSelect.value;
-    rec.maxAlternatives = 3;
+    rec.maxAlternatives = 1;
 
     rec.onstart = function(){
       recognizing = true;
+      starting = false;
+      lastResultIndex = 0;
       setStatus('Listening… speak normally, even quietly', 'listening');
     };
 
     rec.onresult = function(event){
+      // Only process results from resultIndex forward, and never re-process
+      // an index we've already finalized — this is the guard against doubling.
       let interim = '';
       for(let i = event.resultIndex; i < event.results.length; i++){
         const result = event.results[i];
         const transcript = result[0].transcript;
         if(result.isFinal){
-          finalText += transcript + ' ';
+          if(i >= lastResultIndex){
+            finalText += transcript.trim() + ' ';
+            lastResultIndex = i + 1;
+          }
         } else {
           interim += transcript;
         }
@@ -182,9 +195,9 @@
     };
 
     rec.onerror = function(event){
+      starting = false;
       if(event.error === 'no-speech'){
-        // Very common and harmless with continuous mode — just keep going.
-        return;
+        return; // harmless, common in continuous mode
       }
       if(event.error === 'not-allowed' || event.error === 'service-not-allowed'){
         setStatus('Microphone permission denied. Allow mic access in your browser site settings and reload.', 'error');
@@ -200,43 +213,46 @@
         updateButton();
         return;
       }
-      // network / aborted / other transient errors: let onend handle restart
       setStatus('Hiccup (' + event.error + ') — recovering…', 'error');
     };
 
     rec.onend = function(){
       recognizing = false;
+      starting = false;
       if(listening){
-        // Auto-restart to keep continuous listening alive (browsers stop it periodically)
         clearTimeout(restartTimer);
         restartTimer = setTimeout(function(){
-          if(listening){ startEngine(); }
-        }, 250);
+          if(listening) startEngine();
+        }, 300);
       } else {
         setStatus('Stopped. Tap Start to listen again.', '');
       }
     };
 
+    recognition = rec;
     return rec;
   }
 
   function startEngine(){
+    if(starting || recognizing) return; // never call start() while one is already active/starting
+    const rec = ensureRecognition();
+    rec.lang = langSelect.value;
+    starting = true;
     try{
-      recognition = buildRecognition();
-      recognition.start();
+      rec.start();
     }catch(e){
-      // start() can throw if called while already started; retry shortly
+      starting = false;
       clearTimeout(restartTimer);
-      restartTimer = setTimeout(function(){ if(listening) startEngine(); }, 300);
+      restartTimer = setTimeout(function(){ if(listening) startEngine(); }, 400);
     }
   }
 
   function stopEngine(){
     clearTimeout(restartTimer);
+    listening = false;
     if(recognition){
-      try{ recognition.onend = null; recognition.stop(); }catch(e){}
+      try{ recognition.stop(); }catch(e){}
     }
-    recognizing = false;
     stopMeter();
   }
 
@@ -282,9 +298,8 @@
       startEngine();
       startMeter();
     } else {
-      listening = false;
-      updateButton();
       stopEngine();
+      updateButton();
     }
   });
 
@@ -306,8 +321,9 @@
   langSelect.addEventListener('change', function(){
     if(listening){
       // restart with new language
-      stopEngine();
-      setTimeout(startEngine, 200);
+      clearTimeout(restartTimer);
+      if(recognition){ try{ recognition.stop(); }catch(e){} }
+      // onend will fire, see listening is still true, and auto-restart with the new lang
     }
   });
 
