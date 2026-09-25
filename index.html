@@ -141,6 +141,28 @@
     dot.className = 'dot' + (state ? ' ' + state : '');
   }
 
+  // Mobile Chrome (especially Android) restarts its recognition engine often,
+  // even mid-sentence, and on restart it can re-transcribe a tail of audio it
+  // already sent. That produces repeated words/phrases. This trims any
+  // overlap between the end of what we already have and the start of the
+  // new chunk before appending, at the word level.
+  function appendDeduped(newChunk){
+    const chunk = newChunk.trim();
+    if(!chunk) return;
+    const existingWords = finalText.trim().split(/\s+/).filter(Boolean);
+    const newWords = chunk.split(/\s+/).filter(Boolean);
+    const maxOverlap = Math.min(existingWords.length, newWords.length, 12);
+    let overlap = 0;
+    for(let len = maxOverlap; len > 0; len--){
+      const tail = existingWords.slice(existingWords.length - len).join(' ').toLowerCase();
+      const head = newWords.slice(0, len).join(' ').toLowerCase();
+      if(tail === head){ overlap = len; break; }
+    }
+    const trimmedWords = newWords.slice(overlap);
+    if(trimmedWords.length === 0) return;
+    finalText += trimmedWords.join(' ') + ' ';
+  }
+
   function renderTranscript(interim){
     if(!finalText && !interim){
       transcriptBox.innerHTML = '<span class="placeholder">Your speech will appear here…</span>';
@@ -184,7 +206,7 @@
         const transcript = result[0].transcript;
         if(result.isFinal){
           if(i >= lastResultIndex){
-            finalText += transcript.trim() + ' ';
+            appendDeduped(transcript);
             lastResultIndex = i + 1;
           }
         } else {
@@ -223,7 +245,7 @@
         clearTimeout(restartTimer);
         restartTimer = setTimeout(function(){
           if(listening) startEngine();
-        }, 300);
+        }, 60);
       } else {
         setStatus('Stopped. Tap Start to listen again.', '');
       }
