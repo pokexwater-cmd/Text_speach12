@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Speech to Text</title>
+<style>
+  :root{
+    --bg:#f5f5f7; --card:#ffffff; --text:#1d1d1f; --sub:#6e6e73;
+    --accent:#0071e3; --danger:#e0332f; --border:#e5e5e7;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#121214; --card:#1c1c1e; --text:#f2f2f7; --sub:#9a9aa0;
+      --accent:#0a84ff; --danger:#ff453a; --border:#2c2c2e;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#121214; --card:#1c1c1e; --text:#f2f2f7; --sub:#9a9aa0;
+    --accent:#0a84ff; --danger:#ff453a; --border:#2c2c2e;
+  }
+  *{box-sizing:border-box;}
+  html{scroll-padding-top:env(safe-area-inset-top,0px);}
+  body{
+    margin:0; min-height:100%; background:var(--bg); color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+    display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap{width:100%; max-width:640px; padding:24px 16px 40px;}
+  h1{font-size:22px; font-weight:600; margin:8px 0 4px; text-align:center;}
+  .sub{color:var(--sub); text-align:center; font-size:14px; margin-bottom:20px;}
+  .card{
+    background:var(--card); border:1px solid var(--border); border-radius:16px;
+    padding:16px; margin-bottom:16px;
+  }
+  .status-row{display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;}
+  .dot{width:10px; height:10px; border-radius:50%; background:var(--sub); flex-shrink:0;}
+  .dot.listening{background:#34c759; box-shadow:0 0 0 rgba(52,199,89,0.5); animation:pulse 1.4s infinite;}
+  .dot.error{background:var(--danger);}
+  @keyframes pulse{
+    0%{box-shadow:0 0 0 0 rgba(52,199,89,0.5);}
+    70%{box-shadow:0 0 0 10px rgba(52,199,89,0);}
+    100%{box-shadow:0 0 0 0 rgba(52,199,89,0);}
+  }
+  #statusText{font-size:14px; color:var(--sub);}
+  .btnRow{display:flex; gap:10px; flex-wrap:wrap;}
+  button{
+    border:none; border-radius:12px; padding:14px 18px; font-size:16px; font-weight:600;
+    cursor:pointer; flex:1; min-width:120px; -webkit-tap-highlight-color:transparent;
+  }
+  #toggleBtn{background:var(--accent); color:#fff;}
+  #toggleBtn.stop{background:var(--danger);}
+  #clearBtn, #copyBtn{background:var(--border); color:var(--text); flex:0 1 auto;}
+  .meter{
+    height:8px; border-radius:4px; background:var(--border); overflow:hidden; margin-top:12px;
+  }
+  #meterFill{height:100%; width:0%; background:var(--accent); transition:width 0.08s linear;}
+  #transcriptBox{
+    min-height:220px; max-height:50vh; overflow-y:auto; white-space:pre-wrap; word-wrap:break-word;
+    font-size:17px; line-height:1.5; padding:4px 2px;
+  }
+  #interim{color:var(--sub); font-style:italic;}
+  .placeholder{color:var(--sub);}
+  .settings{display:flex; gap:10px; flex-wrap:wrap; font-size:13px; color:var(--sub); margin-top:12px;}
+  select{
+    background:var(--bg); color:var(--text); border:1px solid var(--border);
+    border-radius:8px; padding:6px 8px; font-size:13px;
+  }
+  .note{font-size:12px; color:var(--sub); margin-top:14px; text-align:center; line-height:1.5;}
+  a{color:var(--accent);}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎙️ Speech to Text</h1>
+  <div class="sub">High-sensitivity continuous transcription</div>
+
+  <div class="card">
+    <div class="status-row">
+      <div class="dot" id="dot"></div>
+      <div id="statusText">Tap Start and allow microphone access</div>
+    </div>
+    <div class="btnRow">
+      <button id="toggleBtn">Start Listening</button>
+      <button id="clearBtn">Clear</button>
+      <button id="copyBtn">Copy</button>
+    </div>
+    <div class="meter"><div id="meterFill"></div></div>
+    <div class="settings">
+      <label>Language:
+        <select id="langSelect">
+          <option value="en-US">English (US)</option>
+          <option value="en-GB">English (UK)</option>
+          <option value="en-IN">English (India)</option>
+          <option value="es-ES">Spanish</option>
+          <option value="fr-FR">French</option>
+          <option value="de-DE">German</option>
+          <option value="hi-IN">Hindi</option>
+          <option value="ar-SA">Arabic</option>
+          <option value="ja-JP">Japanese</option>
+          <option value="zh-CN">Chinese (Mandarin)</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <div class="card">
+    <div id="transcriptBox"><span class="placeholder">Your speech will appear here…</span></div>
+  </div>
+
+  <div class="note">
+    Works in Chrome, Edge, and Safari (desktop &amp; mobile). If nothing appears, check that the site has microphone permission in your browser's site settings, and that your OS microphone privacy setting allows the browser. The mic-level bar shows it's picking up sound even before words are finalized — speak normally, it catches quiet speech too.
+  </div>
+</div>
+
+<script>
+(function(){
+  const toggleBtn = document.getElementById('toggleBtn');
+  const clearBtn = document.getElementById('clearBtn');
+  const copyBtn = document.getElementById('copyBtn');
+  const transcriptBox = document.getElementById('transcriptBox');
+  const statusText = document.getElementById('statusText');
+  const dot = document.getElementById('dot');
+  const meterFill = document.getElementById('meterFill');
+  const langSelect = document.getElementById('langSelect');
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  let finalText = '';
+  let recognition = null;
+  let listening = false;      // user wants it running
+  let recognizing = false;    // engine currently active
+  let restartTimer = null;
+  let audioCtx, analyser, micStream, meterRaf;
+
+  function setStatus(msg, state){
+    statusText.textContent = msg;
+    dot.className = 'dot' + (state ? ' ' + state : '');
+  }
+
+  function renderTranscript(interim){
+    if(!finalText && !interim){
+      transcriptBox.innerHTML = '<span class="placeholder">Your speech will appear here…</span>';
+      return;
+    }
+    const escaped = finalText.replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    const interimEscaped = (interim||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
+    transcriptBox.innerHTML = escaped + (interimEscaped ? '<span id="interim">' + interimEscaped + '</span>' : '');
+    transcriptBox.scrollTop = transcriptBox.scrollHeight;
+  }
+
+  if(!SpeechRecognition){
+    setStatus('Speech recognition is not supported in this browser. Try Chrome or Edge.', 'error');
+    toggleBtn.disabled = true;
+  }
+
+  function buildRecognition(){
+    const rec = new SpeechRecognition();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = langSelect.value;
+    rec.maxAlternatives = 3;
+
+    rec.onstart = function(){
+      recognizing = true;
+      setStatus('Listening… speak normally, even quietly', 'listening');
+    };
+
+    rec.onresult = function(event){
+      let interim = '';
+      for(let i = event.resultIndex; i < event.results.length; i++){
+        const result = event.results[i];
+        const transcript = result[0].transcript;
+        if(result.isFinal){
+          finalText += transcript + ' ';
+        } else {
+          interim += transcript;
+        }
+      }
+      renderTranscript(interim);
+    };
+
+    rec.onerror = function(event){
+      if(event.error === 'no-speech'){
+        // Very common and harmless with continuous mode — just keep going.
+        return;
+      }
+      if(event.error === 'not-allowed' || event.error === 'service-not-allowed'){
+        setStatus('Microphone permission denied. Allow mic access in your browser site settings and reload.', 'error');
+        listening = false;
+        stopEngine();
+        updateButton();
+        return;
+      }
+      if(event.error === 'audio-capture'){
+        setStatus('No microphone found. Check your device and browser mic settings.', 'error');
+        listening = false;
+        stopEngine();
+        updateButton();
+        return;
+      }
+      // network / aborted / other transient errors: let onend handle restart
+      setStatus('Hiccup (' + event.error + ') — recovering…', 'error');
+    };
+
+    rec.onend = function(){
+      recognizing = false;
+      if(listening){
+        // Auto-restart to keep continuous listening alive (browsers stop it periodically)
+        clearTimeout(restartTimer);
+        restartTimer = setTimeout(function(){
+          if(listening){ startEngine(); }
+        }, 250);
+      } else {
+        setStatus('Stopped. Tap Start to listen again.', '');
+      }
+    };
+
+    return rec;
+  }
+
+  function startEngine(){
+    try{
+      recognition = buildRecognition();
+      recognition.start();
+    }catch(e){
+      // start() can throw if called while already started; retry shortly
+      clearTimeout(restartTimer);
+      restartTimer = setTimeout(function(){ if(listening) startEngine(); }, 300);
+    }
+  }
+
+  function stopEngine(){
+    clearTimeout(restartTimer);
+    if(recognition){
+      try{ recognition.onend = null; recognition.stop(); }catch(e){}
+    }
+    recognizing = false;
+    stopMeter();
+  }
+
+  function updateButton(){
+    if(listening){
+      toggleBtn.textContent = 'Stop Listening';
+      toggleBtn.classList.add('stop');
+    } else {
+      toggleBtn.textContent = 'Start Listening';
+      toggleBtn.classList.remove('stop');
+      dot.className = 'dot';
+      meterFill.style.width = '0%';
+    }
+  }
+
+  // Cosmetic pulse only — does NOT request its own mic stream, so it can never
+  // cause a second, conflicting permission prompt alongside speech recognition.
+  function startMeter(){
+    let t = 0;
+    function tick(){
+      if(!recognizing){ meterFill.style.width = '0%'; }
+      else {
+        t += 0.15;
+        const pct = 20 + Math.abs(Math.sin(t)) * 60;
+        meterFill.style.width = pct + '%';
+      }
+      meterRaf = requestAnimationFrame(tick);
+    }
+    tick();
+  }
+
+  function stopMeter(){
+    if(meterRaf) cancelAnimationFrame(meterRaf);
+    meterFill.style.width = '0%';
+  }
+
+  toggleBtn.addEventListener('click', function(){
+    if(!SpeechRecognition) return;
+    if(!listening){
+      listening = true;
+      updateButton();
+      setStatus('Requesting microphone…', '');
+      startEngine();
+      startMeter();
+    } else {
+      listening = false;
+      updateButton();
+      stopEngine();
+    }
+  });
+
+  clearBtn.addEventListener('click', function(){
+    finalText = '';
+    renderTranscript('');
+  });
+
+  copyBtn.addEventListener('click', function(){
+    const text = finalText.trim();
+    if(!text) return;
+    navigator.clipboard.writeText(text).then(function(){
+      const old = copyBtn.textContent;
+      copyBtn.textContent = 'Copied!';
+      setTimeout(function(){ copyBtn.textContent = old; }, 1200);
+    }).catch(function(){});
+  });
+
+  langSelect.addEventListener('change', function(){
+    if(listening){
+      // restart with new language
+      stopEngine();
+      setTimeout(startEngine, 200);
+    }
+  });
+
+  renderTranscript('');
+})();
+</script>
+</body>
+</html>
